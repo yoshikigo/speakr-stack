@@ -57,5 +57,5 @@ for d in "$OLD_ASR" "$OLD_SPEAKR"; do
 done
 rmdir "$HOME/asr" 2>/dev/null && ok "移除空的 ~/asr" || true
 echo
-echo "完成。之後一律在 $REPO 底下跑腳本，更新用 git pull。"
+echo "完成。之後一律在 $REPO 底下跑腳本。更新：tar xzf 新的 speakr-stack.tar.gz -C ~ --overwrite（或 git pull）"
 echo "確認都正常後可刪備份：rm -rf $HOME/.cache/speakr-stack-old"

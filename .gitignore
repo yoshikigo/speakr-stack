@@ -5,3 +5,4 @@ ab-*/
 *.bak*
 *cookies*.txt
 *.env.local
+*.wav
