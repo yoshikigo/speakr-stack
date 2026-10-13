@@ -1,0 +1,45 @@
+[Unit]
+Description=Speakr URL import (yt-dlp -> Speakr upload API)
+Wants=speakr.service
+After=speakr.service
+
+[Container]
+ContainerName=speakr-url
+Image=localhost/speakr-url:latest
+Network=host
+# 不要跑 Speakr 的 entrypoint（那會初始化資料庫、建管理員）
+Entrypoint=/opt/url-import/bin/python
+Exec=/opt/url-import/server.py
+
+# venv 只放進這個容器的 PATH（yt-dlp 靠 PATH 找 deno）
+Environment=PATH=/opt/url-import/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/tmp
+Environment=SPEAKR_URL=http://127.0.0.1:8899
+Environment=LISTEN=127.0.0.1:8897
+Environment=WORK_DIR=/tmp
+# 影片長度上限（秒）與音訊位元率；4 小時 @96k ≈ 170 MB，低於 Speakr 預設上傳上限 250 MB
+Environment=MAX_DURATION_SECONDS=14400
+Environment=AUDIO_BITRATE=96K
+Environment=CONCURRENCY=2
+
+# 繁中翻譯的結果（原文不動，翻譯另外存這裡；刪掉 volume 就是清掉所有翻譯）
+Volume=speakr-translations:/data
+Environment=TRANSLATE_DIR=/data/translations
+
+# 選用：年齡限制 / 會員影片需要登入的 cookies（Netscape 格式，從瀏覽器擴充功能匯出）
+# Volume=%h/.config/speakr/yt-cookies.txt:/config/cookies.txt:ro
+# Environment=YTDLP_COOKIES=/config/cookies.txt
+
+NoNewPrivileges=true
+DropCapability=ALL
+
+HealthCmd=/opt/url-import/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8897/api/health', timeout=5)"
+HealthInterval=60s
+HealthStartPeriod=30s
+
+[Service]
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

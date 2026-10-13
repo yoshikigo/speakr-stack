@@ -1,0 +1,45 @@
+# asr-server：faster-whisper (CTranslate2) + OpenAI 相容 API + /asr（sherpa-onnx 說話者分辨）
+# CTranslate2 4.8 的 wheel 用 CUDA 12.8 編譯、cuDNN 是選配，所以只需要 cuBLAS 12。
+# 驅動需 >= 570（nvidia-open 現行版本沒問題）。
+FROM docker.io/library/python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install \
+        faster-whisper==1.2.1 \
+        ctranslate2==4.8.2 \
+        "nvidia-cublas-cu12==12.9.*" \
+        "fastapi==0.142.*" \
+        "uvicorn==0.54.*" \
+        python-multipart==0.0.32 \
+        opencc==1.4.2 \
+        prometheus-client==0.26.0
+
+# PyAV 19 拿掉了 faster-whisper 1.2.1 用的 metadata_errors 參數
+RUN pip install av==18.1.0
+
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib
+
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin asr
+
+# 說話者分辨：sherpa-onnx（CPU，內含 onnxruntime）+ 轉送 WhisperX 用的 httpx
+RUN pip install sherpa-onnx==1.13.8 "httpx>=0.27,<1"
+
+# 分辨模型（約 35 MB，Apache-2.0 / MIT）：pyannote segmentation-3.0（ONNX）+ 3D-Speaker CAM++ 中英聲紋
+COPY scripts/fetch_diar_models.py /tmp/fetch_diar_models.py
+RUN python /tmp/fetch_diar_models.py && rm /tmp/fetch_diar_models.py
+
+COPY app/ /app/
+COPY scripts/convert_breeze.py /opt/convert_breeze.py
+
+USER asr
+WORKDIR /app
+# 執行期一律離線：模型只從 /models 讀，不會偷偷去 Hugging Face 下載
+ENV HF_HUB_OFFLINE=1 \
+    HF_HOME=/tmp/hf
+
+EXPOSE 8098
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8098", "--workers", "1", "--no-access-log"]

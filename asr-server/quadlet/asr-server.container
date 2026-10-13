@@ -1,0 +1,53 @@
+[Unit]
+Description=ASR server (faster-whisper: Breeze-ASR-25 / Whisper large-v3, OpenAI-compatible + /asr diarization)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=asr-server
+Image=localhost/asr-server:latest
+# 3090 eGPU（CDI：/etc/cdi/nvidia.yaml）
+AddDevice=nvidia.com/gpu=all
+# host 網路：要連 127.0.0.1:9010（WhisperX，A/B 測試用）；服務本身只綁 127.0.0.1:8098
+Network=host
+Exec=uvicorn server:app --host 127.0.0.1 --port 8098 --workers 1 --no-access-log
+Volume=asr-models:/models:ro
+
+ReadOnly=true
+NoNewPrivileges=true
+DropCapability=ALL
+
+Environment=ASR_MODELS=breeze-asr-25=/models/breeze-asr-25,whisper-large-v3=/models/whisper-large-v3
+Environment=ASR_DEFAULT_MODEL=breeze-asr-25
+Environment=ASR_COMPUTE_TYPE=int8_float16
+Environment=ASR_MAX_LOADED=1
+Environment=ASR_IDLE_UNLOAD=600
+Environment=ASR_LANGUAGE=zh
+# 沒指定語言時各模型的預設（auto = 自動偵測）；ASR_LANGUAGE 只給沒列在這裡的模型用
+Environment=ASR_MODEL_LANGUAGES=breeze-asr-25=zh,breeze-asr-26=zh,whisper-large-v3=auto
+Environment=ASR_OPENCC=s2twp
+# Speakr / WhisperX 會整段錄音一次送（1 小時 WAV 約 115 MB）
+Environment=ASR_MAX_UPLOAD_MB=1024
+
+# /asr 說話者分辨（sherpa-onnx，CPU，和 GPU 轉錄平行跑）
+Environment=ASR_DIARIZE=1
+Environment=ASR_DIAR_THREADS=8
+# 分群門檻：多人被併成一人 → 調低（0.4）；一人被拆成多人 → 調高（0.6）
+Environment=ASR_DIAR_THRESHOLD=0.5
+# A/B：/asr?model=whisperx 轉送給 WhisperX；沒裝 WhisperX 時拿掉這行即可
+Environment=ASR_WHISPERX_URL=http://127.0.0.1:9010
+
+# 想加 API key：podman secret create asr-api-key -，再打開下一行，Hermes 那邊設 stt.openai.api_key
+# Secret=asr-api-key,type=env,target=ASR_API_KEY
+
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8098/health', timeout=3)"
+HealthInterval=60s
+HealthStartPeriod=20s
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

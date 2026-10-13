@@ -1,0 +1,20 @@
+# localhost/speakr-url = 官方 Speakr lite + 上傳視窗的「從網址匯入」欄位 + yt-dlp 側車服務
+# speakr 和 speakr-url 兩個容器共用這個映像（Quadlet 用不同的 Entrypoint/Exec）。
+ARG BASE=docker.io/learnedmachine/speakr:lite
+FROM ${BASE}
+
+# yt-dlp 裝在獨立 venv：不動 Speakr 的套件版本。deno 是 yt-dlp 解 YouTube 簽章需要的 JS runtime。
+# 更新 yt-dlp：scripts/update-ytdlp.sh（改 YTDLP_REFRESH 讓這層重跑）
+ARG YTDLP_REFRESH=0
+RUN echo "yt-dlp refresh: ${YTDLP_REFRESH}" \
+ && python -m venv /opt/url-import \
+ && /opt/url-import/bin/pip install --no-cache-dir --upgrade pip \
+ && /opt/url-import/bin/pip install --no-cache-dir "yt-dlp[default]" "deno>=2.6.6" "httpx>=0.27,<1" \
+ && /opt/url-import/bin/yt-dlp --version \
+ && /opt/url-import/bin/deno --version
+
+# 模板補丁：錨點對不上會讓 build 失敗（Speakr 改版時），舊映像繼續跑不受影響
+COPY patch_speakr.py /tmp/patch_speakr.py
+RUN python /tmp/patch_speakr.py /app && rm /tmp/patch_speakr.py
+COPY url-import.js /app/static/js/url-import.js
+COPY server.py namecheck.py translate.py obsidian_export.py /opt/url-import/

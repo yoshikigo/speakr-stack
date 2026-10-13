@@ -1,0 +1,36 @@
+[Unit]
+Description=WhisperX ASR (diarization + voice profiles; transcription delegated to asr-server/Breeze)
+Wants=network-online.target asr-server.service
+After=network-online.target asr-server.service
+
+[Container]
+ContainerName=whisperx
+# 釘版本：0.4.x 才有 ASR_BACKEND=external；:latest 標籤可能還停在舊版
+Image=docker.io/learnedmachine/whisperx-asr-service:0.4.2
+AddDevice=nvidia.com/gpu=all
+# host 網路才能連 127.0.0.1:8098（asr-server）；服務本身只綁 127.0.0.1:9010，不對外
+Network=host
+WorkingDir=/workspace
+Entrypoint=python3
+Exec=-m uvicorn app.main:app --host 127.0.0.1 --port 9010
+
+# pyannote / Qwen 對齊模型的快取（第一次使用時下載，之後離線可用）
+Volume=whisperx-cache:/.cache
+ShmSize=2g
+
+EnvironmentFile=%h/.config/whisperx/whisperx.env
+Secret=hf-token,type=env,target=HF_TOKEN
+Environment=PYTHONWARNINGS=ignore::UserWarning
+
+HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9010/health', timeout=5)"
+HealthInterval=60s
+HealthStartPeriod=120s
+
+[Service]
+Restart=on-failure
+RestartSec=15
+# 第一次啟動要從 volume 初始化，給久一點
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

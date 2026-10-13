@@ -1,0 +1,34 @@
+[Unit]
+Description=Speakr (recordings -> transcripts -> notes; asr-server + Ollama)
+Wants=network-online.target asr-server.service
+After=network-online.target asr-server.service
+
+[Container]
+ContainerName=speakr
+# lite = 不含 PyTorch（~0.7 GB，完整版 ~4.4 GB）；語意搜尋改走 Ollama embeddings API
+Image=docker.io/learnedmachine/speakr:lite
+# 和 open-webui / hermes 一樣用 host 網路，才能直接連 127.0.0.1:8098 (asr) 與 :11435 (ollama proxy)
+Network=host
+# 只綁 127.0.0.1，對外只透過 tailscale serve（HTTPS）
+Exec=gunicorn --workers 3 --worker-class gthread --threads 8 --bind 127.0.0.1:8899 --timeout 600 src.app:app
+
+Volume=speakr-uploads:/data/uploads
+Volume=speakr-instance:/data/instance
+
+EnvironmentFile=%h/.config/speakr/speakr.env
+# 管理員密碼只在第一次啟動建立帳號時用到
+Secret=speakr-admin-password,type=env,target=ADMIN_PASSWORD
+
+NoNewPrivileges=true
+
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8899/login', timeout=5)"
+HealthInterval=60s
+HealthStartPeriod=60s
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

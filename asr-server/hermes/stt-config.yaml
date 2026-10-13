@@ -1,0 +1,11 @@
+# 合併進 ~/.hermes/config.yaml（取代原本整段 stt:）
+# 編輯：podman unshare vim ~/.hermes/config.yaml
+stt:
+  enabled: true
+  provider: openai              # 用內建的 OpenAI 相容路徑，打本機 asr-server
+  language: zh
+  echo_transcripts: true        # 先開著核對辨識結果；穩定後可改 false（見 README「LINE 免費額度」）
+  openai:
+    model: breeze-asr-25        # 或 whisper-large-v3
+    base_url: http://127.0.0.1:8098/v1
+    # api_key: <asr-api-key>    # 只有 asr-server 設了 ASR_API_KEY 才需要；本機位址不填會自動送佔位 key
