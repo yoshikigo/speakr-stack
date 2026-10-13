@@ -25,4 +25,6 @@
 
 ## 授權
 
-Speakr 本體為 AGPL-3.0（`speakr/url-import/` 會在建置時修補 Speakr 的模板）；WhisperX 為 BSD-2；模型各有授權（Breeze-ASR 系列 Apache-2.0）。
+本 repo 的程式與腳本：Apache-2.0（見 [LICENSE](LICENSE)）。
+
+第三方元件各自的授權不變：Speakr 本體為 AGPL-3.0（本 repo 不含 Speakr 原始碼，但 `speakr/url-import/` 會在建置映像時修補 Speakr 的模板，產生的映像屬於 Speakr 的衍生作品，若對外提供服務需遵守 AGPL）；WhisperX 為 BSD-2；模型各有授權（Breeze-ASR 系列 Apache-2.0）。
