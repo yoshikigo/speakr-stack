@@ -23,6 +23,21 @@
 
 安裝步驟見各目錄的 README：先 `asr-server/`，再 `speakr/`。
 
+```bash
+git clone https://github.com/yoshikigo/speakr-stack ~/speakr-stack
+cd ~/speakr-stack && git pull          # 之後更新
+```
+
+### 從 tar.gz 舊目錄搬過來
+
+以前把 `asr-server.tar.gz` 解到 `~/asr/asr-server`、`speakr.tar.gz` 解到 `~/speakr` 的話：
+
+```bash
+cd ~/speakr-stack && ./migrate-from-tarball.sh
+```
+
+會檢查已安裝的 Quadlet / systemd unit 有沒有指到舊目錄（有就改成 `~/speakr-stack/...`，先備份）、把只有舊目錄才有的檔案複製進 repo、再把舊目錄移到 `~/.cache/speakr-stack-old/`（不刪）。不會停服務。
+
 ## 授權
 
 本 repo 的程式與腳本：Apache-2.0（見 [LICENSE](LICENSE)）。

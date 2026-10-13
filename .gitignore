@@ -3,3 +3,5 @@ __pycache__/
 *.tar.gz
 ab-*/
 *.bak*
+*cookies*.txt
+*.env.local

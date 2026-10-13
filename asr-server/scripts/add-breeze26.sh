@@ -3,7 +3,7 @@
 #   1. 下載官方 MediaTek-Research/Breeze-ASR-26 並轉成 CTranslate2 → volume asr-models:/models/breeze-asr-26
 #   2. asr-server Quadlet 的 ASR_MODELS 加上 breeze-asr-26，重啟
 #   3. 冒煙測試
-# 之後在 Speakr 那邊跑 ~/speakr/scripts/use-asr-diarize.sh，選單就會多出「A3：Breeze-ASR-26 台語」。
+# 之後在 Speakr 那邊跑 ~/speakr-stack/speakr/scripts/use-asr-diarize.sh，選單就會多出「A3：Breeze-ASR-26 台語」。
 # 可重複執行；FORCE=1 重新轉檔；BREEZE26_REVISION=<commit> 釘版本。
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -52,5 +52,5 @@ if command -v espeak-ng >/dev/null; then
   ok "能轉錄（合成語音是華語，只測能不能跑；台語要用真的錄音測）"
 fi
 echo
-echo "下一步：cd ~/speakr && ./scripts/use-asr-diarize.sh   # Speakr 選單加入 A3"
+echo "下一步：cd ~/speakr-stack/speakr && ./scripts/use-asr-diarize.sh   # Speakr 選單加入 A3"
 echo "VRAM：ASR_MAX_LOADED=1 時同一時間只常駐一個模型，切換模型會自動卸載前一個，不會多吃 VRAM。"

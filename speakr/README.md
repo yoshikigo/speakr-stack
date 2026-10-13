@@ -15,8 +15,8 @@
 ## 部署
 
 ```bash
-mkdir -p ~/speakr && tar xzf ~/Downloads/speakr.tar.gz -C ~/speakr --strip-components=1
-cd ~/speakr
+git clone https://github.com/yoshikigo/speakr-stack ~/speakr-stack   # 或 gh repo clone yoshikigo/speakr-stack ~/speakr-stack
+cd ~/speakr-stack/speakr
 ./scripts/install.sh
 ```
 
@@ -106,7 +106,7 @@ EMBEDDING_MODEL=qwen3-embedding:4b
 安裝（Speakr 已經用 `install.sh` 部署好之後）：
 
 ```bash
-cd ~/speakr && ./scripts/install-url-import.sh
+cd ~/speakr-stack/speakr && ./scripts/install-url-import.sh
 ```
 
 腳本會 build `localhost/speakr-url`（官方 lite 映像 + 模板補丁 + 獨立 venv 裡的 yt-dlp/deno）、讓 Speakr 改用這個映像、啟動 `speakr-url` 側車，並加上 `tailscale serve --set-path=/url-import`。第一次打開請強制重新整理（Ctrl+Shift+R），避免瀏覽器用到舊的頁面快取。
@@ -161,7 +161,7 @@ Speakr 摘要完成 ──webhook（HMAC 簽章）──> speakr-url /hooks/spea
 安裝（需要先裝好網址匯入；SearXNG 要開 JSON 格式，腳本會檢查）：
 
 ```bash
-cd ~/speakr && ./scripts/install-namecheck.sh
+cd ~/speakr-stack/speakr && ./scripts/install-namecheck.sh
 ```
 
 腳本會請你在 Speakr 建一個 API token（Account Settings → API Tokens，Custom 勾 read、write、webhooks），存成 podman secret，然後建立 webhook、讓 Speakr 允許送到本機、重建 speakr-url。最後可以輸入一筆錄音 ID 立刻試跑。
@@ -193,8 +193,8 @@ cd ~/speakr && ./scripts/install-namecheck.sh
 更新方式（已裝網址匯入的話，重建映像即可，Speakr 和 speakr-url 會一起重啟）：
 
 ```bash
-tar xzf ~/Downloads/speakr.tar.gz -C ~ --overwrite
-cd ~/speakr && YTDLP_REFRESH=keep ./scripts/install-url-import.sh
+cd ~/speakr-stack && git pull
+cd speakr && YTDLP_REFRESH=keep ./scripts/install-url-import.sh
 ```
 
 ## 繁中翻譯分頁
@@ -234,7 +234,7 @@ vault/Speakr/2026-09-23 Teaching in the Age of AI….md
 安裝（要先有 obsidian-server，且已經用新版 install-url-import.sh 重建過映像）：
 
 ```bash
-cd ~/speakr && ./scripts/install-obsidian-export.sh
+cd ~/speakr-stack/speakr && ./scripts/install-obsidian-export.sh
 ```
 
 - 只把 vault 的 `Speakr/` 資料夾（可改 `OBSIDIAN_FOLDER=…`）掛進 speakr-url，其他筆記碰不到。vault 位置自動從 `~/.config/obsidian-server/env` 讀，或用 `VAULT_DIR=…` 指定。
@@ -262,7 +262,7 @@ Speakr ──/asr?model=…──> asr-server（127.0.0.1:8098）
 先升級 asr-server（`asr-server.tar.gz` 的 `./scripts/upgrade.sh`），再讓 Speakr 改用它：
 
 ```bash
-cd ~/speakr && ./scripts/use-asr-diarize.sh
+cd ~/speakr-stack/speakr && ./scripts/use-asr-diarize.sh
 ```
 
 之後在 Speakr **上傳時**或錄音頁 ↻ ▾ **Reprocess Transcription** 的模型選單選：
@@ -302,7 +302,7 @@ Speakr ──/asr──> whisperx（127.0.0.1:9010，Quadlet，GPU）
 - https://huggingface.co/pyannote/speaker-diarization-3.1
 
 ```bash
-cd ~/speakr && ./scripts/install-whisperx.sh
+cd ~/speakr-stack/speakr && ./scripts/install-whisperx.sh
 ```
 
 腳本會：存 token 成 podman secret `hf-token` 並確認三個模型都有權限 → 把 asr-server 的上傳上限放寬到 1 GB（WhisperX 會把整段錄音轉成 WAV 一次送）→ 拉 WhisperX 映像（PyTorch + CUDA，好幾 GB，網路慢會很久，中斷後重跑會接著拉）→ 安裝 Quadlet → 用兩種機器聲音做冒煙測試（第一次會再下載約 1.5 GB 模型）→ 把 Speakr 切到 `asr_endpoint`。

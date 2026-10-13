@@ -18,7 +18,7 @@ HAS_B26=0; echo "$H" | grep -q '"breeze-asr-26"' && HAS_B26=1
 HAS_WX=0; echo "$H" | grep -Eq '"whisperx": ?"http' && curl -fsS -o /dev/null http://127.0.0.1:9010/health 2>/dev/null && HAS_WX=1
 
 [ "$HAS_WX" = 1 ] || echo "  （WhisperX 沒在跑或 asr-server 沒設 ASR_WHISPERX_URL → 選單不含 B；要 B 就先 systemctl --user start whisperx 再重跑）"
-[ "$HAS_B26" = 1 ] || echo "  （asr-server 還沒有 breeze-asr-26 → 選單不含 A3；先跑 ~/asr/asr-server/scripts/add-breeze26.sh）"
+[ "$HAS_B26" = 1 ] || echo "  （asr-server 還沒有 breeze-asr-26 → 選單不含 A3；先跑 ~/speakr-stack/asr-server/scripts/add-breeze26.sh）"
 [ -f "$ENV.bak-diarize" ] || cp "$ENV" "$ENV.bak-diarize"
 python3 - "$ENV" "$HAS_WX" "$HAS_B26" <<'PY'
 import re, sys

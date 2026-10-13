@@ -101,8 +101,8 @@ podman logs --since 5m hermes 2>&1 | grep -iE "transcri|stt"   # 應出現 Trans
 升級已部署的 asr-server：
 
 ```bash
-tar xzf ~/Downloads/asr-server.tar.gz -C ~/asr --overwrite
-cd ~/asr/asr-server && ./scripts/upgrade.sh
+cd ~/speakr-stack && git pull
+cd asr-server && ./scripts/upgrade.sh
 ```
 
 注意：Quadlet 改成 `Network=host` 並只綁 `127.0.0.1:8098`（原本是 PublishPort），這樣它才連得到 WhisperX 的 127.0.0.1:9010。對其他服務沒有影響（它們本來就打 127.0.0.1:8098）。
@@ -130,8 +130,8 @@ cd ~/asr/asr-server && ./scripts/upgrade.sh
 MediaTek Research 的台語語音辨識（Whisper large-v2 微調、Apache 2.0），台語或台華夾雜的錄音轉成中文字（再經 OpenCC 轉繁體台灣用語）。
 
 ```bash
-cd ~/asr/asr-server && ./scripts/add-breeze26.sh     # 下載＋轉檔＋加進 ASR_MODELS＋重啟
-cd ~/speakr && ./scripts/use-asr-diarize.sh           # Speakr 選單多出「A3：Breeze-ASR-26 台語」
+cd ~/speakr-stack/asr-server && ./scripts/add-breeze26.sh     # 下載＋轉檔＋加進 ASR_MODELS＋重啟
+cd ~/speakr-stack/speakr && ./scripts/use-asr-diarize.sh           # Speakr 選單多出「A3：Breeze-ASR-26 台語」
 ```
 
 - LINE / Open WebUI 也能用：`model=breeze-asr-26`。
