@@ -216,6 +216,23 @@ cd speakr && YTDLP_REFRESH=keep ./scripts/install-url-import.sh
 - 換翻譯模型：drop-in 加 `Environment=TRANSLATE_MODEL=...`（預設跟人名查證同一個模型）。
 - 清掉所有翻譯：`systemctl --user stop speakr-url && podman volume rm speakr-translations && systemctl --user start speakr-url`。
 
+## 一鍵匯入 Libratory（錄音 → 用原始錄音朗讀的書）
+
+錄音標題列 💎 旁邊的 📚 **匯入 Libratory**（手機版在標題列下方那排圖示）。
+
+```
+瀏覽器 ──(你的 Speakr 登入)──> speakr-url /url-import/api/libratory
+  ├─ 用你的 session 讀一次錄音（看不到就擋下）
+  └─ POST http://127.0.0.1:3034/api/speakr/recordings/<id>/import  → Libratory
+        └─ Libratory 用自己的 Speakr API token 讀逐字稿＋音檔 → 分章、整理文字、猜說話者、切音檔
+右下角卡片每 3 秒更新進度，完成後「在 Libratory 開啟 →」
+```
+
+- 需要 Libratory（`libratory_full` 的 `deploy/quadlet-cjk`）已經偵測到 Speakr，並在 Libratory 的 Settings 貼好 Speakr API token（read 權限）。
+- 同一筆錄音按第二次會直接回同一本書。
+- Libratory 不在 `127.0.0.1:3034`：drop-in 加 `Environment=LIBRATORY_URL=http://127.0.0.1:<埠>`；書本連結預設用 Libratory 的 `PUBLIC_ORIGIN`，沒設的話加 `Environment=LIBRATORY_PUBLIC_URL=https://arch.<tailnet>.ts.net:8448`。
+- 更新：`cd ~/speakr-stack && git pull && cd speakr && YTDLP_REFRESH=keep ./scripts/install-url-import.sh`（重建 speakr-url 映像，按鈕和 API 才會出現）。
+
 ## 一鍵匯入 Obsidian
 
 錄音標題列分享鈕旁邊的 💎 **匯入 Obsidian**（手機版在標題列下方那排圖示）。按一下就把這筆錄音寫成一篇 Markdown：

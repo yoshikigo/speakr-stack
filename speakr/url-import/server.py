@@ -6,6 +6,8 @@
   GET  /api/translation/<rid>                   → 繁中翻譯（右側「繁中翻譯」分頁）
   POST /api/translation   {"recording_id": 123}  → 開始翻譯摘要＋逐字稿
   POST /api/obsidian      {"recording_id": 123, "overwrite": false} → 寫進 Obsidian vault 的 Speakr 資料夾
+  POST /api/libratory     {"recording_id": 123} → 請同一台機器上的 Libratory 把這筆錄音做成書
+  GET  /api/libratory/<book_id>                → Libratory 匯入進度
   GET  /api/health
 
 驗證：沿用使用者在 Speakr 的登入 session（瀏覽器同源請求會帶 cookie），
@@ -40,6 +42,7 @@ import httpx
 import namecheck
 import translate
 import obsidian_export
+import libratory_export
 
 log = logging.getLogger("speakr-url")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -340,7 +343,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self._path()
         if path == "/api/health":
             return self._send(200, {"status": "ok", "ytdlp": YTDLP_VERSION, "namecheck": namecheck.enabled,
-                                    "obsidian": obsidian_export.OUT_DIR.is_dir()})
+                                    "obsidian": obsidian_export.OUT_DIR.is_dir(),
+                                    "libratory": libratory_export.enabled})
         m = re.fullmatch(r"/api/translation/(\d{1,12})", path)
         if m:
             headers = self._headers()
@@ -355,6 +359,12 @@ class Handler(BaseHTTPRequestHandler):
             except httpx.HTTPError:
                 return self._send(502, {"error": "連不到 Speakr"})
             return self._send(200, translate.view(rid, rec))
+        m = re.fullmatch(r"/api/libratory/([0-9a-f-]{36})", path)
+        if m:
+            if not whoami(self._headers()):
+                return self._send(401, {"error": "not logged in"})
+            status, payload = libratory_export.status(m.group(1))
+            return self._send(status, payload)
         m = re.fullmatch(r"/api/jobs/([A-Za-z0-9_-]{8,64})", path)
         if m:
             user = whoami(self._headers())
@@ -373,7 +383,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(min(length, 1 << 20))
             status, payload = namecheck.handle_webhook(raw, self._headers())
             return self._send(status, payload)
-        if self._path() not in ("/api/import", "/api/namecheck", "/api/translation", "/api/obsidian"):
+        if self._path() not in ("/api/import", "/api/namecheck", "/api/translation", "/api/obsidian", "/api/libratory"):
             return self._send(404, {"error": "not found"})
         headers = self._headers()
         # 擋跨站請求（CSRF）：要求 JSON + 自訂標頭。別的網站要送這種請求必須先過 CORS preflight，
@@ -403,6 +413,21 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning("寫入 Obsidian 失敗：%s", exc)
                 return self._send(500, {"error": f"寫不進 vault：{exc.strerror or exc}"})
             log.info("Obsidian 匯出 recording %s（user %s）→ %s", rid, user["id"], status)
+            return self._send(status, payload)
+        if self._path() == "/api/libratory":
+            try:
+                length = int(headers.get("content-length", "0"))
+                rid = int(json.loads(self.rfile.read(min(length, 4096)) or b"{}").get("recording_id"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return self._send(400, {"error": "bad request"})
+            try:
+                status, payload = libratory_export.start(rid, speakr_headers(headers))
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                return self._send(code if code in (401, 403, 404) else 502, {"error": "無法讀取這份錄音"})
+            except httpx.HTTPError:
+                return self._send(502, {"error": "連不到 Speakr"})
+            log.info("Libratory 匯入 recording %s（user %s）→ %s", rid, user["id"], status)
             return self._send(status, payload)
         if self._path() == "/api/translation":
             try:
