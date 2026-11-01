@@ -30,6 +30,19 @@ URL_BLOCK = """            <!-- speakr-url-import: 從網址匯入（yt-dlp） -
                 <p id="speakr-url-hint" class="text-[10px] text-[var(--text-muted)] text-center">
                     只抓音訊，下載完自動加入轉錄佇列；進度顯示在右下角。
                 </p>
+                <!-- 從伺服器資料夾選檔：後端有掛資料夾時 url-import.js 才會把這一塊顯示出來 -->
+                <div id="speakr-local-import" style="display:none;">
+                    <button type="button" id="speakr-local-open-btn"
+                            style="width:100%; padding:0.5rem 1rem; border-radius:0.5rem; font-size:0.875rem; font-weight:500;
+                                   background: var(--bg-secondary); color: var(--text-primary);
+                                   border: 1px solid var(--border-secondary);">
+                        📁 從伺服器資料夾選檔（影片、音訊皆可，大檔也行）
+                    </button>
+                    <div id="speakr-local-panel"
+                         style="display:none; margin-top:0.5rem; border-radius:0.5rem; overflow:hidden;
+                                background: var(--bg-input, var(--bg-secondary)); color: var(--text-primary);
+                                border: 1px solid var(--border-secondary);"></div>
+                </div>
             </div>
 
 """

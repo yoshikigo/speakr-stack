@@ -1,6 +1,8 @@
 """speakr-url：把影片/音訊網址交給 yt-dlp 下載音訊，再用 Speakr 的上傳 API 送進轉錄流程。
 
   POST /api/import        {"url": "...", "transcription_model": ""}  → {"id": ..., "state": "queued"}
+  GET  /api/browse?path=  瀏覽伺服器資料夾（唯讀掛進來的 /mnt）→ 資料夾與媒體檔清單
+  POST /api/import-local  {"path": "電影/a.mkv"}  → 伺服器上用 ffmpeg 抽音訊再交給 Speakr（大檔不經瀏覽器）
   GET  /api/jobs/<id>     → 工作狀態
   POST /api/namecheck     {"recording_id": 123}  → 人名查證工作（逐字稿工具列「校正姓名」按鈕）
   GET  /api/translation/<rid>                   → 繁中翻譯（右側「繁中翻譯」分頁）
@@ -18,6 +20,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import logging
@@ -33,10 +36,11 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
+import localfiles
 import namecheck
 import translate
 import obsidian_export
@@ -50,6 +54,7 @@ HOST, PORT = os.getenv("LISTEN", "127.0.0.1:8897").rsplit(":", 1)
 PREFIX = "/url-import"
 YTDLP = os.getenv("YTDLP_BIN", shutil.which("yt-dlp") or "yt-dlp")
 FFMPEG = os.getenv("FFMPEG_BIN", shutil.which("ffmpeg") or "/usr/local/bin/ffmpeg")
+FFPROBE = os.getenv("FFPROBE_BIN", shutil.which("ffprobe") or "/usr/local/bin/ffprobe")
 COOKIES = os.getenv("YTDLP_COOKIES", "")  # 選用：Netscape cookies.txt（年齡限制、會員影片）
 MAX_DURATION = int(os.getenv("MAX_DURATION_SECONDS", "14400"))  # 4 小時
 BITRATE = os.getenv("AUDIO_BITRATE", "96K")  # 語音 96k AAC 綽綽有餘；4 小時約 170 MB < Speakr 預設 250 MB
@@ -156,6 +161,26 @@ def public(job: dict) -> dict:
     return {k: v for k, v in job.items() if k not in ("user_id", "headers")}
 
 
+
+def post_to_speakr(job: dict, audio: Path, filename: str, mime: str, data: dict) -> dict:
+    """用使用者自己的 session 呼叫 Speakr 的上傳 API。失敗丟 ImportError_，成功回傳 Speakr 的 JSON。"""
+    with audio.open("rb") as fh:
+        r = httpx.post(
+            f"{SPEAKR}/api/v1/recordings/upload",
+            headers=speakr_headers(job["headers"]),
+            data=data,
+            files={"file": (filename, fh, mime)},
+            timeout=httpx.Timeout(connect=10, read=600, write=600, pool=10),
+        )
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    if r.status_code not in (200, 201, 202):
+        raise ImportError_(f"Speakr 拒絕上傳（HTTP {r.status_code}）：{body.get('error') or r.text[:200]}")
+    return body
+
+
 # ---------------------------------------------------------------- 工作流程
 
 def run_job(job_id: str) -> None:
@@ -246,20 +271,7 @@ def run_job(job_id: str) -> None:
                 data["initial_prompt"] = hint[:400]
             if job.get("transcription_model"):
                 data["transcription_model"] = job["transcription_model"]
-            with audio.open("rb") as fh:
-                r = httpx.post(
-                    f"{SPEAKR}/api/v1/recordings/upload",
-                    headers=speakr_headers(job["headers"]),
-                    data=data,
-                    files={"file": (f"{title[:80]}.m4a", fh, "audio/mp4")},
-                    timeout=httpx.Timeout(connect=10, read=600, write=600, pool=10),
-                )
-            try:
-                body = r.json()
-            except ValueError:
-                body = {}
-            if r.status_code not in (200, 201, 202):
-                raise ImportError_(f"Speakr 拒絕上傳（HTTP {r.status_code}）：{body.get('error') or r.text[:200]}")
+            body = post_to_speakr(job, audio, f"{title[:80]}.m4a", "audio/mp4", data)
             update(job_id, state="done", recording_id=body.get("id"), duplicate=bool(body.get("idempotent_replay")))
             log.info("完成 %s → recording %s（%s）", job_id, body.get("id"), title)
 
@@ -274,6 +286,87 @@ def run_job(job_id: str) -> None:
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
             with jobs_lock:  # 憑證用完就丟
+                jobs[job_id].pop("headers", None)
+
+
+def run_local_job(job_id: str) -> None:
+    """伺服器資料夾裡的影片／音訊 → ffmpeg 只取音訊（m4a）→ Speakr 上傳 API。"""
+    with jobs_lock:
+        job = dict(jobs[job_id])
+    workdir = WORK / job_id
+    with slots:
+        try:
+            workdir.mkdir(parents=True, exist_ok=True)
+            src = localfiles.resolve(job["rel"])
+            if not src.is_file() or not localfiles.is_media(src):
+                raise ImportError_("找不到這個檔案，或不是支援的影音格式")
+            st = src.stat()
+            title = src.stem.strip() or "未命名檔案"
+            update(job_id, state="probing", title=title, size_mb=round(st.st_size / 1e6, 1))
+            probe = subprocess.run(
+                [FFPROBE, "-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", str(src)],
+                capture_output=True, text=True, timeout=120)
+            if probe.returncode != 0:
+                raise ImportError_("讀不出影音資訊（檔案毀損或格式不支援）")
+            info = json.loads(probe.stdout or "{}")
+            if not any(x.get("codec_type") == "audio" for x in info.get("streams", [])):
+                raise ImportError_("這個檔案沒有音軌")
+            try:
+                duration = float(info.get("format", {}).get("duration") or 0)
+            except ValueError:
+                duration = 0.0
+            if duration and duration > localfiles.MAX_DURATION:
+                raise ImportError_(f"長度 {duration / 3600:.1f} 小時，超過上限 {localfiles.MAX_DURATION / 3600:.1f} 小時")
+            update(job_id, duration=duration)
+
+            out = workdir / "audio.m4a"
+            update(job_id, state="converting", progress=0.0)
+            cmd = [FFMPEG, "-nostdin", "-y", "-v", "error", "-i", str(src), "-vn", "-sn", "-dn",
+                   "-ac", "1", "-c:a", "aac", "-b:a", BITRATE, "-movflags", "+faststart",
+                   "-progress", "pipe:1", "-nostats", str(out)]
+            errlog = workdir / "ffmpeg.err"
+            with errlog.open("w") as errfh:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfh, text=True)
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    if duration and line.startswith("out_time_us="):
+                        try:
+                            update(job_id, progress=min(100.0, int(line.split("=", 1)[1]) / 1e6 / duration * 100))
+                        except ValueError:
+                            pass
+                proc.wait()
+            if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+                tail = errlog.read_text(errors="replace").strip().splitlines()[-1:] or ["ffmpeg 失敗"]
+                raise ImportError_(f"轉檔失敗：{tail[0][:200]}")
+
+            update(job_id, state="uploading", progress=100.0, size_mb=round(out.stat().st_size / 1e6, 1))
+            log.info("%s 本機檔案 %s 抽出音訊 %.1f MB，上傳到 Speakr", job_id, job["rel"], out.stat().st_size / 1e6)
+            data = {
+                "title": title[:250],
+                "notes": f"來源：伺服器檔案 {job['rel']}",
+                "meeting_date": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%dT00:00:00"),
+                "idempotency_key": "local:" + hashlib.sha1(f"{job['rel']}|{st.st_size}|{int(st.st_mtime)}".encode()).hexdigest()[:32],
+                "initial_prompt": re.sub(r"[\s._]+", " ", title)[:200],
+            }
+            if job.get("transcription_model"):
+                data["transcription_model"] = job["transcription_model"]
+            body = post_to_speakr(job, out, f"{title[:80]}.m4a", "audio/mp4", data)
+            update(job_id, state="done", recording_id=body.get("id"), duplicate=bool(body.get("idempotent_replay")))
+            log.info("完成 %s → recording %s（%s）", job_id, body.get("id"), job["rel"])
+
+        except (ImportError_, localfiles.PathError) as exc:
+            update(job_id, state="error", error=str(exc))
+            log.info("失敗 %s：%s", job_id, exc)
+        except subprocess.TimeoutExpired:
+            update(job_id, state="error", error="讀取檔案資訊逾時（外接硬碟睡著了？）")
+        except OSError as exc:
+            update(job_id, state="error", error=f"讀不到檔案：{exc.strerror or exc}")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("工作 %s 發生未預期錯誤", job_id)
+            update(job_id, state="error", error=f"內部錯誤：{type(exc).__name__}")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+            with jobs_lock:
                 jobs[job_id].pop("headers", None)
 
 
@@ -340,7 +433,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self._path()
         if path == "/api/health":
             return self._send(200, {"status": "ok", "ytdlp": YTDLP_VERSION, "namecheck": namecheck.enabled,
-                                    "obsidian": obsidian_export.OUT_DIR.is_dir()})
+                                    "obsidian": obsidian_export.OUT_DIR.is_dir(),
+                                    "localfiles": localfiles.enabled})
         m = re.fullmatch(r"/api/translation/(\d{1,12})", path)
         if m:
             headers = self._headers()
@@ -355,6 +449,19 @@ class Handler(BaseHTTPRequestHandler):
             except httpx.HTTPError:
                 return self._send(502, {"error": "連不到 Speakr"})
             return self._send(200, translate.view(rid, rec))
+        if path == "/api/browse":
+            user = whoami(self._headers())
+            if not user:
+                return self._send(401, {"error": "not logged in"})
+            if localfiles.ADMIN_ONLY and not user.get("is_admin"):
+                return self._send(403, {"error": "只有管理員可以瀏覽伺服器資料夾"})
+            qs = parse_qs(urlsplit(self.path).query)
+            try:
+                return self._send(200, localfiles.browse((qs.get("path") or [""])[0]))
+            except localfiles.PathError as exc:
+                return self._send(400, {"error": str(exc)})
+            except OSError as exc:
+                return self._send(500, {"error": f"讀不到資料夾：{exc.strerror or exc}"})
         m = re.fullmatch(r"/api/jobs/([A-Za-z0-9_-]{8,64})", path)
         if m:
             user = whoami(self._headers())
@@ -373,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(min(length, 1 << 20))
             status, payload = namecheck.handle_webhook(raw, self._headers())
             return self._send(status, payload)
-        if self._path() not in ("/api/import", "/api/namecheck", "/api/translation", "/api/obsidian"):
+        if self._path() not in ("/api/import", "/api/import-local", "/api/namecheck", "/api/translation", "/api/obsidian"):
             return self._send(404, {"error": "not found"})
         headers = self._headers()
         # 擋跨站請求（CSRF）：要求 JSON + 自訂標頭。別的網站要送這種請求必須先過 CORS preflight，
@@ -385,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "not logged in"})
         if self._path() == "/api/namecheck":
             return self._namecheck(headers, user)
+        if self._path() == "/api/import-local":
+            return self._import_local(headers, user)
         if self._path() == "/api/obsidian":
             try:
                 length = int(headers.get("content-length", "0"))
@@ -443,6 +552,36 @@ class Handler(BaseHTTPRequestHandler):
         log.info("新工作 %s（user %s）", job_id, user["id"])
         return self._send(202, public(job))
 
+
+    def _import_local(self, headers: dict[str, str], user: dict):
+        if localfiles.ADMIN_ONLY and not user.get("is_admin"):
+            return self._send(403, {"error": "只有管理員可以匯入伺服器上的檔案"})
+        if not localfiles.enabled:
+            return self._send(503, {"error": "還沒設定資料夾匯入（跑 ./scripts/install-local-files.sh）"})
+        try:
+            length = int(headers.get("content-length", "0"))
+            req = json.loads(self.rfile.read(min(length, 16384)) or b"{}")
+            rel = str(req.get("path", "")).strip()
+            src = localfiles.resolve(rel)
+            if not rel or not src.is_file() or not localfiles.is_media(src):
+                raise localfiles.PathError("找不到這個檔案，或不是支援的影音格式")
+            rel = localfiles.rel_of(src)
+        except localfiles.PathError as exc:
+            return self._send(400, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError):
+            return self._send(400, {"error": "bad request"})
+        job_id = secrets.token_urlsafe(12)
+        job = {
+            "id": job_id, "kind": "local", "rel": rel, "url": "", "state": "queued", "progress": None, "title": src.stem,
+            "created": datetime.now(timezone.utc).isoformat(), "updated": time.time(),
+            "transcription_model": str(req.get("transcription_model") or "").strip()[:100], "user_id": user["id"],
+            "headers": {k: v for k, v in headers.items() if k in FORWARD_HEADERS},
+        }
+        with jobs_lock:
+            jobs[job_id] = job
+        threading.Thread(target=run_local_job, args=(job_id,), name=f"local-{job_id}", daemon=True).start()
+        log.info("本機檔案匯入 %s（user %s）：%s", job_id, user["id"], rel)
+        return self._send(202, public(job))
 
     def _namecheck(self, headers: dict[str, str], user: dict):
         try:

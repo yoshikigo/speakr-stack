@@ -8,6 +8,7 @@ PORT=8899
 TS_PORT=${TS_PORT:-8899}
 CONF_DIR="$HOME/.config/speakr"
 QUADLET_DIR="$HOME/.config/containers/systemd"
+. "$HERE/scripts/lib-data.sh"
 ASR_URL=http://127.0.0.1:8098
 OLLAMA_URL=http://127.0.0.1:11435
 
@@ -72,6 +73,7 @@ podman image inspect --format '  digest: {{.Digest}}' docker.io/learnedmachine/s
 echo "== 5/6 Quadlet"
 mkdir -p "$QUADLET_DIR"
 cp "$HERE/quadlet/speakr.container" "$QUADLET_DIR/"
+apply_data_dirs "$QUADLET_DIR/speakr.container"   # 搬過資料（migrate-data.sh）就沿用 /mnt/expansion/speakr
 # 已經裝過網址匯入（含校正姓名、繁中翻譯）就沿用打過補丁的映像，不要被換回官方映像
 if podman image exists localhost/speakr-url:latest && [ -f "$QUADLET_DIR/speakr-url.container" ]; then
   sed -i 's#^Image=.*#Image=localhost/speakr-url:latest#' "$QUADLET_DIR/speakr.container"

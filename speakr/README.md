@@ -8,7 +8,7 @@
               └─ 摘要 / 標題 / 對話 → 127.0.0.1:11435/v1   ollama-metrics-proxy → Ollama
 ```
 
-- 錄音、逐字稿、筆記全部存在主機的 podman volume（`speakr-uploads`、`speakr-instance`），不會傳到外部服務。
+- 錄音、逐字稿、筆記全部存在主機（預設 podman volume `speakr-uploads`、`speakr-instance`，可用 `migrate-data.sh` 搬到 `/mnt/expansion/speakr`），不會傳到外部服務。
 - 只綁 `127.0.0.1`，LAN 和網際網路都連不到；只有 tailnet 裡的裝置能用。
 - 有 HTTPS，所以手機瀏覽器可以直接用 Speakr 的「錄音」按鈕現場錄（瀏覽器在 HTTP 下不給麥克風權限）。
 
@@ -331,6 +331,59 @@ cd ~/speakr-stack/speakr && ./scripts/install-whisperx.sh
 ./scripts/rollback-whisperx.sh
 ```
 
+## 資料放在哪裡：搬到 /mnt/expansion/speakr（選用）
+
+預設錄音、資料庫放在 podman volume（`~/.local/share/containers/storage/volumes/`，吃內建硬碟）。要改放 `/mnt/expansion/speakr`：
+
+```bash
+./scripts/migrate-data.sh                      # → /mnt/expansion/speakr/{uploads,instance,url-data}
+./scripts/migrate-data.sh /mnt/xxx             # 搬到別的資料夾
+MOVE="uploads url-data" ./scripts/migrate-data.sh   # 只搬錄音檔，資料庫留在內建硬碟
+./scripts/migrate-data.sh --rollback           # 退回 podman volume
+```
+
+腳本做的事：停服務 → **複製**（舊 volume 不動）→ 核對檔案數與總位元組 → 改 Quadlet → 啟動。核對不過就不切換。
+確認一切正常、用幾天後再刪舊 volume（腳本最後會印指令），空間才會釋放。
+
+- `/mnt/expansion/speakr` 不存在時會用 sudo 建立並交給你的帳號；但**上層 `/mnt/expansion` 必須已經存在**（不會替你建立），而且最好是掛載點——不是的話腳本會警告，免得硬碟沒掛上時資料寫進系統碟。
+- **檔案系統**：要放資料庫（`instance/`，SQLite）的話請用 ext4 / xfs / btrfs。exFAT / NTFS / FAT / 網路磁碟遇到斷電容易損毀，腳本偵測到會警告，建議用 `MOVE="uploads url-data"`。
+- **外接硬碟沒掛上時不會當成全新安裝**：Quadlet 會加一行 `ExecStartPre=test -f /mnt/expansion/speakr/.speakr-data`，沒掛載 Speakr 就啟動失敗（每 10 秒重試，硬碟掛上後自動恢復），而不是用空資料夾建一個全新資料庫。
+- 路徑記在 `~/.config/speakr/data-dirs`；之後重跑 `install.sh`、`install-url-import.sh` 會沿用，不會被範本改回 volume。
+- 備份：停 Speakr 後 `rsync -a /mnt/expansion/speakr/ <備份位置>/`，資料庫在 `instance/` 一起帶走。
+
+## 大檔案：1000 MB 上限與「從伺服器資料夾選檔」
+
+上傳視窗出現 `Video "xxx.mkv" exceeds the video upload maximum of 1000 MB and was skipped.`，這是 **Speakr 自己的管理員設定**（`max_audio_only_video_size_mb`，預設 = 音訊上限 250 MB × 4），不是 Tailscale 或反向代理的限制。兩種解法：
+
+**A. 調高上限**（照常用瀏覽器上傳）
+
+```bash
+./scripts/set-upload-limit.sh            # 影片上限 → 8192 MB
+./scripts/set-upload-limit.sh 20000      # 自訂
+./scripts/set-upload-limit.sh --show     # 只看目前值
+```
+
+（也可以在網頁：使用者選單 → Admin → System Settings → `max_audio_only_video_size_mb` → Edit。改完要重新整理頁面。）
+缺點：整支影片要先傳進 Speakr、存進 `uploads/`（要有檔案大小的空位）才抽音訊，幾 GB 的檔案很慢。
+
+**B. 從伺服器資料夾選檔（推薦）**：影片本來就在主機上（`/mnt/...`）時，不必經過瀏覽器。
+
+```bash
+./scripts/install-url-import.sh                   # 先要有新版映像（含這個功能）；已經裝過也要重跑一次
+./scripts/install-local-files.sh                  # 把 /mnt 唯讀掛進 speakr-url
+LOCAL_DIR=/mnt/mybook/video ./scripts/install-local-files.sh   # 只開放某個資料夾（更安全）
+```
+
+上傳視窗的「從網址匯入」下面會多一個「📁 從伺服器資料夾選檔」：逐層瀏覽 `/mnt`，勾選影片或音訊（可多選）→「匯入選取的檔案」。
+伺服器用 ffmpeg **只抽出音訊**（96 kbps 單聲道 AAC，2 小時約 85 MB；用第一條音軌）再送進 Speakr 轉錄，進度顯示在右下角。
+
+- 不受 1000 MB 上限影響，也不會在 `uploads/` 留下原片。電影級的 mkv 也沒問題；單檔長度上限 6 小時（`LOCAL_MAX_DURATION_SECONDS`）。
+- **安全**：容器唯讀掛載，原檔不會被動到；只能看到掛進來的資料夾，`..` 與指到資料夾外的符號連結都會被擋；預設**只有 Speakr 管理員**能瀏覽與匯入（`ALL_USERS=1 ./scripts/install-local-files.sh` 才開放所有登入的使用者）。
+- 容器用你的帳號身分讀檔：你讀不到的檔案（權限 600、別人的家目錄）這裡也看不到。
+- 同一個檔案 24 小時內重複匯入會被擋下（顯示「已匯入過」）。
+- 多音軌的電影（例如原音＋配音）只會取第一條音軌；需要別條的話先用 ffmpeg 另存成單音軌再匯入。
+- 外接硬碟睡著第一次讀取會比較慢；沒掛上時選單會顯示「找不到這個資料夾」，掛上後重新整理即可。
+
 ## 日常操作
 
 ```bash
@@ -340,7 +393,7 @@ systemctl --user restart speakr.service          # 改完 speakr.env 後
 podman pull docker.io/learnedmachine/speakr:lite && systemctl --user restart speakr.service   # 更新
 ```
 
-**備份**（停機備份最安全，SQLite 在 `speakr-instance`）：
+**備份**（停機備份最安全，SQLite 在 `speakr-instance`；已搬到 `/mnt/expansion/speakr` 的話直接 `rsync -a /mnt/expansion/speakr/ <備份位置>/`）：
 
 ```bash
 systemctl --user stop speakr.service
@@ -385,3 +438,7 @@ rm ~/.config/containers/systemd/speakr.container && systemctl --user daemon-relo
 - ⚠️ 匯入 Obsidian 未在真的 vault / LiveSync 上測過（exFAT 上的檔名、LiveSync 偵測外部新增檔案）。
 - ⚠️ 翻譯分頁未在真的 Speakr 頁面裡切換過（Vue 重繪時面板是否保持）；27B 長逐字稿的實際翻譯速度未測。
 - ⚠️ 按鈕未在真的瀏覽器裡點過；人名查證未實測：真實 SearXNG 搜尋結果的品質、27B 在 `think:false` 下的判斷準確度。
+- ✅ 從伺服器資料夾選檔：用假 Speakr + 真的 ffmpeg 跑過（含影片＋兩條音軌的 mkv → 單聲道 AAC 96 kbps、上傳欄位、24 小時去重 key、管理員／非管理員／未登入、缺 CSRF 標頭、非影音副檔名）；路徑逃逸測過（`..`、絕對路徑、指向 `/`、`/etc` 的符號連結全被擋，資料夾內的符號連結正常）；選檔面板在 headless Chromium 裡實際點過（開啟 → 進資料夾 → 勾選 → 匯入 → 右下角進度卡），無 JS 錯誤；模板補丁對 Speakr 原始碼目前的模板套過。
+- ⚠️ 選檔功能未實測：真的 `/mnt` 外接硬碟（exFAT/NTFS 的檔名、權限、睡眠喚醒）、幾 GB 的真實電影、`localhost/speakr-url` 映像重建（patch 錨點在官方 `lite` 映像裡是否一致）。
+- ✅ 上限設定：`set-upload-limit.sh` 的資料庫寫入邏輯用模擬的 `system_setting` 表測過（新增、更新、`--show`）；欄位名稱、資料庫路徑與「啟動時才讀上限」對照 Speakr 原始碼確認。⚠️ 沒對真的 Speakr 容器跑過。
+- ✅ 資料搬家：`lib-data.sh` 的 Quadlet 改寫（Volume 換成 bind mount、加掛載檢查、重複執行不重複插入、`--rollback` 還原後與原範本逐字相同）測過。⚠️ `migrate-data.sh` 的 podman 複製／核對步驟（這台沒有 podman）**沒有實跑**；它設計成複製後核對、不過就不切換，舊 volume 一律保留。

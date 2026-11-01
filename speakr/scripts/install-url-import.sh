@@ -8,6 +8,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 QUADLET_DIR="$HOME/.config/containers/systemd"
 TS_PORT=${TS_PORT:-8899}
 IMAGE=localhost/speakr-url:latest
+. "$HERE/scripts/lib-data.sh"
 
 ok()   { printf '  \e[32m✔\e[0m %s\n' "$*"; }
 warn() { printf '  \e[33m!\e[0m %s\n' "$*"; }
@@ -28,6 +29,8 @@ echo "== 3/5 Speakr 改用 $IMAGE"
 cp -n "$QUADLET_DIR/speakr.container" "$QUADLET_DIR/speakr.container.bak-url" || true
 sed -i "s#^Image=.*#Image=$IMAGE#" "$QUADLET_DIR/speakr.container"
 cp "$HERE/quadlet/speakr-url.container" "$QUADLET_DIR/"
+apply_data_dirs "$QUADLET_DIR/speakr.container"
+apply_data_dirs "$QUADLET_DIR/speakr-url.container"
 systemctl --user daemon-reload
 systemctl --user restart speakr.service speakr-url.service
 
@@ -48,6 +51,8 @@ podman run --rm --entrypoint grep "$IMAGE" -q speakr-tr-left-tab /app/templates/
   || die "逐字稿面板沒有「繁中翻譯」分頁（patch_speakr.py 沒套到？）"
 podman run --rm --entrypoint grep "$IMAGE" -q speakr-obs-btn /app/templates/components/header.html \
   || die "標題列沒有「匯入 Obsidian」按鈕（patch_speakr.py 沒套到？）"
+podman run --rm --entrypoint grep "$IMAGE" -q speakr-local-open-btn /app/templates/components/upload-view.html \
+  || die "上傳視窗沒有「從伺服器資料夾選檔」（patch_speakr.py 沒套到？）"
 ok "Speakr 已載入網址匯入欄位、「校正姓名」按鈕、「繁中翻譯」分頁"
 
 echo "== 4/5 tailscale serve：https://…:$TS_PORT/url-import → 127.0.0.1:8897"

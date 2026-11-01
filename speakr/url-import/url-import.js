@@ -48,11 +48,12 @@
       const title = document.createElement('div');
       title.style.cssText = 'font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       const nc = j.kind === 'namecheck';
-      title.textContent = nc ? `校正姓名 · 錄音 #${j.recording_id}` : (j.title || j.url || id);
+      title.textContent = nc ? `校正姓名 · 錄音 #${j.recording_id}` : (j.title || j.rel || j.url || id);
       const line = document.createElement('div');
       line.style.cssText = 'margin-top:0.2rem;color:var(--text-secondary,#555);white-space:pre-line;';
       let text = LABEL[j.state] || j.state;
-      if (j.state === 'downloading' && j.progress != null) text += ` ${j.progress.toFixed(0)}%`;
+      if ((j.state === 'downloading' || (j.kind === 'local' && j.state === 'converting')) && j.progress != null) text += ` ${j.progress.toFixed(0)}%`;
+      if (j.kind === 'local' && j.state === 'converting') text = '抽出音訊';
       if (nc && j.state === 'running' && j.step) text = j.step;
       if (j.state === 'error' && j.error) text += `：${j.error}`;
       if (j.state === 'done' && j.duplicate) text = '這支影片 24 小時內已匯入過';
@@ -470,10 +471,131 @@
     }
   }
 
+
+  // ------------------------------------------------------------ 從伺服器資料夾選檔
+
+  const LOCAL = { path: '', selected: new Set(), data: null, busy: false };
+  const fmtSize = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
+  const VIDEO_RE = /\.(mp4|m4v|mkv|mov|avi|webm|wmv|flv|ts|mts|m2ts|3gp|mpe?g|ogv)$/i;
+
+  async function localBrowse(path) {
+    const panel = document.getElementById('speakr-local-panel');
+    if (!panel) return;
+    LOCAL.busy = true;
+    try {
+      const r = await fetch(`${API}/browse?path=${encodeURIComponent(path)}`, { credentials: 'same-origin' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        LOCAL.data = null;
+        const msg = r.status === 401 ? '請先登入 Speakr' : (data.error || `HTTP ${r.status}`);
+        panel.replaceChildren(el('div', { style: 'padding:0.75rem;color:#ef4444;font-size:0.8rem;' }, msg));
+        return;
+      }
+      LOCAL.data = data;
+      LOCAL.path = data.path;
+      localRender();
+    } catch (_) {
+      panel.replaceChildren(el('div', { style: 'padding:0.75rem;color:#ef4444;font-size:0.8rem;' }, '連不到匯入服務（speakr-url 有在跑嗎？）'));
+    } finally {
+      LOCAL.busy = false;
+    }
+  }
+
+  function localRender() {
+    const panel = document.getElementById('speakr-local-panel');
+    const d = LOCAL.data;
+    if (!panel || !d) return;
+    const muted = 'color:var(--text-muted,#888);';
+    // 路徑列：/mnt › 電影 › 2022
+    const crumbs = el('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:0.25rem;padding:0.5rem 0.75rem;font-size:0.8rem;border-bottom:1px solid var(--border-secondary,#ddd);' });
+    const parts = d.path ? d.path.split('/') : [];
+    const crumb = (label, to) => el('button', { type: 'button', style: 'background:none;border:none;padding:0;cursor:pointer;color:var(--text-accent,#2563eb);', onclick: () => localBrowse(to) }, label);
+    crumbs.append(crumb(d.root, ''));
+    parts.forEach((name, i) => { crumbs.append(el('span', { style: muted }, '›'), crumb(name, parts.slice(0, i + 1).join('/'))); });
+
+    const list = el('div', { style: 'max-height:15rem;overflow-y:auto;' });
+    const row = 'display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.75rem;cursor:pointer;font-size:0.85rem;';
+    if (d.parent !== null) {
+      list.append(el('div', { style: row + muted, onclick: () => localBrowse(d.parent) }, '↩ 上一層'));
+    }
+    for (const e of d.entries) {
+      const rel = d.path ? `${d.path}/${e.name}` : e.name;
+      if (e.type === 'dir') {
+        list.append(el('div', { style: row, onclick: () => localBrowse(rel) }, el('span', {}, '📁'), el('span', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, e.name)));
+      } else {
+        const cb = el('input', { type: 'checkbox' });
+        cb.checked = LOCAL.selected.has(rel);
+        const toggle = () => { LOCAL.selected.has(rel) ? LOCAL.selected.delete(rel) : LOCAL.selected.add(rel); localRender(); };
+        cb.addEventListener('click', (ev) => { ev.stopPropagation(); toggle(); });
+        list.append(el('div', { style: row, onclick: toggle },
+          cb, el('span', {}, VIDEO_RE.test(e.name) ? '🎬' : '🎵'),
+          el('span', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;', title: e.name }, e.name),
+          el('span', { style: muted + 'font-size:0.75rem;white-space:nowrap;' }, fmtSize(e.size))));
+      }
+    }
+    if (d.entries.length === 0) list.append(el('div', { style: 'padding:0.75rem;font-size:0.8rem;' + muted }, '這個資料夾沒有影音檔也沒有子資料夾'));
+    if (d.truncated) list.append(el('div', { style: 'padding:0.5rem 0.75rem;font-size:0.75rem;color:#d97706;' }, '項目太多，只顯示前面一部分，請進到子資料夾再選'));
+
+    const n = LOCAL.selected.size;
+    const go = el('button', { type: 'button', style: `padding:0.4rem 0.9rem;border-radius:0.5rem;font-size:0.85rem;font-weight:500;border:none;color:#fff;background:var(--bg-accent,#2563eb);white-space:nowrap;opacity:${n ? 1 : 0.5};`, onclick: localImport }, n ? `匯入選取的 ${n} 個檔案` : '匯入選取的檔案');
+    go.disabled = n === 0;
+    const foot = el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.5rem 0.75rem;border-top:1px solid var(--border-secondary,#ddd);' },
+      el('span', { style: muted + 'font-size:0.7rem;' }, '伺服器直接抽出音訊，大檔不經瀏覽器、不受上傳大小限制'), go);
+    panel.replaceChildren(crumbs, list, foot);
+  }
+
+  async function localImport() {
+    const rels = [...LOCAL.selected];
+    if (!rels.length || LOCAL.busy) return;
+    LOCAL.busy = true;
+    try {
+      for (const rel of rels) {
+        try {
+          const r = await fetch(`${API}/import-local`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-Speakr-Url': '1' },
+            body: JSON.stringify({ path: rel }),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            track(`err-${Date.now()}-${Math.random()}`, { rel, state: 'error', error: r.status === 401 ? '請先登入 Speakr' : (data.error || `HTTP ${r.status}`) });
+            continue;
+          }
+          LOCAL.selected.delete(rel);
+          track(data.id, data);
+        } catch (_) {
+          track(`err-${Date.now()}-${Math.random()}`, { rel, state: 'error', error: '連不到匯入服務（speakr-url 有在跑嗎？）' });
+        }
+      }
+    } finally {
+      LOCAL.busy = false;
+      localRender();
+    }
+  }
+
+  function localToggle() {
+    const panel = document.getElementById('speakr-local-panel');
+    if (!panel) return;
+    const open = panel.style.display === 'none' || !panel.style.display;
+    panel.style.display = open ? 'block' : 'none';
+    if (open) { panel.replaceChildren(el('div', { style: 'padding:0.75rem;font-size:0.8rem;' }, '讀取中…')); localBrowse(LOCAL.path); }
+  }
+
+  // 後端有掛資料夾才顯示按鈕（按鈕在 Vue 模板裡，所以用 <html> 的屬性 + CSS 控制）
+  fetch(`${API}/health`).then((r) => r.json()).then((h) => {
+    if (h && h.localfiles) {
+      document.documentElement.dataset.speakrLocal = '1';
+      const st = document.createElement('style');
+      st.textContent = 'html[data-speakr-local="1"] #speakr-local-import{display:block !important;}';
+      document.head.appendChild(st);
+    }
+  }).catch(() => {});
+
   // ------------------------------------------------------------ 事件
 
   document.addEventListener('click', (e) => {
     if (e.target.closest && e.target.closest('#speakr-url-import-btn')) { e.preventDefault(); submit(); }
+    if (e.target.closest && e.target.closest('#speakr-local-open-btn')) { e.preventDefault(); localToggle(); }
   });
   // 捕獲階段：手機版標題列的按鈕有 @click.stop（避免觸發標題列本身），冒泡階段收不到
   document.addEventListener('click', (e) => {
