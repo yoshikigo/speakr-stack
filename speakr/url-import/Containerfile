@@ -17,4 +17,4 @@ RUN echo "yt-dlp refresh: ${YTDLP_REFRESH}" \
 COPY patch_speakr.py /tmp/patch_speakr.py
 RUN python /tmp/patch_speakr.py /app && rm /tmp/patch_speakr.py
 COPY url-import.js /app/static/js/url-import.js
-COPY server.py namecheck.py translate.py obsidian_export.py localfiles.py /opt/url-import/
+COPY server.py namecheck.py translate.py obsidian_export.py localfiles.py libratory_export.py /opt/url-import/

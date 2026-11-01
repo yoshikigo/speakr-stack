@@ -591,6 +591,67 @@
     }
   }).catch(() => {});
 
+  // ------------------------------------------------------------ 匯入 Libratory
+
+  // 一張會更新的卡片：匯入要幾分鐘（整理逐字稿、切音檔），完成後給「在 Libratory 開啟」連結
+  function libCard() {
+    let card = document.getElementById('speakr-lib-card');
+    if (!card) {
+      card = el('div', { id: 'speakr-lib-card', style: 'position:fixed;right:1rem;bottom:1rem;z-index:9999;max-width:min(26rem,90vw);' +
+        'padding:0.7rem 0.9rem;border-radius:0.5rem;box-shadow:0 4px 12px rgba(0,0,0,.2);font-size:0.85rem;' +
+        'background:var(--bg-secondary,#fff);color:var(--text-primary,#111);border:1px solid var(--border-primary,#ccc);' });
+      document.body.append(card);
+    }
+    return card;
+  }
+  function libShow(text, url, done) {
+    const card = libCard();
+    card.replaceChildren(el('div', {}, text));
+    if (url) card.append(el('a', { href: url, target: '_blank', rel: 'noopener', style: 'display:inline-block;margin-top:0.35rem;color:var(--text-accent,#2563eb);' }, '在 Libratory 開啟 →'));
+    if (done) card.append(el('button', { type: 'button', class: 'btn btn--sm', style: 'margin-left:0.75rem;', onclick: () => card.remove() }, '關閉'));
+  }
+
+  async function libPoll(bookId, url, started) {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      let data = {};
+      try {
+        const r = await fetch(`${API}/libratory/${bookId}`, { credentials: 'same-origin' });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok) { libShow(`❌ ${data.error || `HTTP ${r.status}`}`, url, true); return; }
+      } catch (_) { continue; }
+      if (data.status === 'failed') { libShow(`❌ Libratory 匯入失敗：${data.error || '原因不明'}`, url, true); return; }
+      if (data.status !== 'extracting') { libShow(`✅ 已匯入 Libratory：${data.chapters} 章，用原始錄音朗讀`, url, true); return; }
+      const min = Math.floor((Date.now() - started) / 60000);
+      libShow(`📚 Libratory 匯入中…（整理逐字稿、分章、切音檔${min ? `，已 ${min} 分鐘` : ''}）`, url, false);
+    }
+  }
+
+  async function exportLibratory(btn) {
+    const rid = parseInt(btn.dataset.rid, 10);
+    if (!rid) return;
+    btn.disabled = true;
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = 'fas fa-spinner fa-spin';
+    try {
+      const r = await fetch(`${API}/libratory`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Speakr-Url': '1' },
+        body: JSON.stringify({ recording_id: rid }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(`❌ 匯入 Libratory 失敗：${r.status === 401 ? '請先登入 Speakr' : (data.error || `HTTP ${r.status}`)}`, false); return; }
+      if (data.existing) { libShow('📚 這筆錄音已經匯入過 Libratory', data.url, true); return; }
+      libShow('📚 Libratory 匯入中…', data.url, false);
+      libPoll(data.book_id, data.url, Date.now());
+    } catch (_) {
+      toast('❌ 連不到 speakr-url 服務', false);
+    } finally {
+      btn.disabled = false;
+      if (icon) icon.className = 'fas fa-book-open';
+    }
+  }
+
   // ------------------------------------------------------------ 事件
 
   document.addEventListener('click', (e) => {
@@ -603,6 +664,8 @@
     if (btn) { e.preventDefault(); startNamecheck(btn); return; }
     const obs = e.target.closest && e.target.closest('.speakr-obs-btn');
     if (obs) { e.preventDefault(); if (!obs.disabled) exportObsidian(obs, false); return; }
+    const lib = e.target.closest && e.target.closest('.speakr-lib-btn');
+    if (lib) { e.preventDefault(); if (!lib.disabled) exportLibratory(lib); return; }
     if (e.target.closest && e.target.closest('.speakr-tr-left-tab')) { e.preventDefault(); setLeft(true); return; }
     if (e.target.closest && e.target.closest('#leftMainColumn .tabs > .tab:not(.speakr-tr-left-tab)')) { setLeft(false); return; }
     const tr = e.target.closest && e.target.closest('.speakr-tr-open');

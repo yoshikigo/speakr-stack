@@ -125,6 +125,19 @@ MOBILE_OBS_MARK = "speakr-url-import-obsidian-mobile"
 MOBILE_OBS_BTN = """                    <button v-if="selectedRecording.id" @click.stop type="button" class="btn btn--icon btn--sm flex-shrink-0 speakr-obs-btn" :data-rid="selectedRecording.id" title="匯入 Obsidian"><i class="fas fa-gem"></i></button><!-- speakr-url-import-obsidian-mobile -->
 """
 
+# 同一列再加「匯入 Libratory」（錄音 → 用原始錄音朗讀的書）
+HEADER_LIB_MARK = "speakr-url-import-libratory"
+HEADER_LIB_BTN = """            <!-- speakr-url-import-libratory -->
+            <button v-if="selectedRecording && selectedRecording.id" type="button"
+                    class="btn btn--icon hidden md:inline-flex speakr-lib-btn"
+                    :data-rid="selectedRecording.id" title="匯入 Libratory（用原始錄音當有聲書）">
+                <i class="fas fa-book-open"></i>
+            </button>
+"""
+MOBILE_LIB_MARK = "speakr-url-import-libratory-mobile"
+MOBILE_LIB_BTN = """                    <button v-if="selectedRecording.id" @click.stop type="button" class="btn btn--icon btn--sm flex-shrink-0 speakr-lib-btn" :data-rid="selectedRecording.id" title="匯入 Libratory"><i class="fas fa-book-open"></i></button><!-- speakr-url-import-libratory-mobile -->
+"""
+
 INDEX = APP / "templates/index.html"
 INDEX_ANCHOR = "filename='js/csrf-refresh.js'"
 SCRIPT_TAG = '    <script src="/static/js/url-import.js" defer></script><!-- speakr-url-import -->\n'
@@ -157,4 +170,6 @@ patch(DESKTOP_TOOLBAR, LEFT_TAB_ANCHOR, LEFT_TAB, before=False, mark=LEFT_TAB_MA
 patch(DESKTOP_TOOLBAR, LEFT_PANEL_ANCHOR, LEFT_PANEL, before=True, mark=LEFT_PANEL_MARK)
 patch(HEADER, HEADER_ANCHOR, HEADER_BTN, before=True, mark=HEADER_MARK)
 patch(MOBILE_TOOLBAR, MOBILE_OBS_ANCHOR, MOBILE_OBS_BTN, before=True, mark=MOBILE_OBS_MARK)
+patch(HEADER, HEADER_ANCHOR, HEADER_LIB_BTN, before=True, mark=HEADER_LIB_MARK)
+patch(MOBILE_TOOLBAR, MOBILE_OBS_ANCHOR, MOBILE_LIB_BTN, before=True, mark=MOBILE_LIB_MARK)
 patch(INDEX, INDEX_ANCHOR, SCRIPT_TAG, before=False)
