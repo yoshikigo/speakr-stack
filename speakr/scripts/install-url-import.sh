@@ -42,7 +42,10 @@ for _ in $(seq 1 60); do
   printf '.'; sleep 2
 done
 curl -fsS -o /dev/null http://127.0.0.1:8897/api/health || { echo; journalctl --user -u speakr-url -n 30 --no-pager; die "speakr-url 沒起來"; }
-curl -fsS http://127.0.0.1:8899/static/js/url-import.js | grep -q speakr-url-import-btn || die "Speakr 沒有載到 url-import.js（映像沒換到？）"
+# 先整份讀進變數再比對：grep -q 找到就關管線，curl 會收到 SIGPIPE，在 pipefail 下被當成失敗
+js="$(curl -fsS http://127.0.0.1:8899/static/js/url-import.js || true)"
+grep -q speakr-url-import-btn <<<"$js" || die "Speakr 沒有載到 url-import.js（映像沒換到？）"
+if grep -q speakr-lib-btn <<<"$js"; then ok "📚 匯入 Libratory 按鈕已載入"; fi
 podman run --rm --entrypoint grep "$IMAGE" -q speakr-namecheck-btn /app/templates/components/detail/desktop-transcription-panel.html \
   || die "逐字稿工具列沒有「校正姓名」按鈕（patch_speakr.py 沒套到？）"
 podman run --rm --entrypoint grep "$IMAGE" -q speakr-tr-panel /app/templates/components/detail/desktop-right-panel.html \
