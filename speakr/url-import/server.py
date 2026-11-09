@@ -165,22 +165,50 @@ def public(job: dict) -> dict:
 
 
 
+def csrf_headers(base: dict[str, str]) -> dict[str, str]:
+    """帶 session cookie 的 POST 必須附 CSRF token（Flask-WTF），而且 HTTPS 下 Referer 要和 Host 同源。
+    先向 Speakr 要一個新 token，並把它可能更新的 session cookie 合併回去。"""
+    from urllib.parse import urlparse
+    h = dict(base)
+    h["referer"] = f"https://{urlparse(SPEAKR).netloc}/"
+    if not h.get("cookie"):
+        return h
+    try:
+        r = httpx.get(f"{SPEAKR}/api/csrf-token", headers=h, timeout=10, follow_redirects=False)
+        token = r.json().get("csrf_token") if r.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        token = None
+    if token:
+        h["x-csrftoken"] = token
+        jar = dict(p.strip().split("=", 1) for p in h["cookie"].split(";") if "=" in p)
+        for name, value in r.cookies.items():
+            jar[name] = value
+        h["cookie"] = "; ".join(f"{k}={v}" for k, v in jar.items())
+    return h
+
+
 def post_to_speakr(job: dict, audio: Path, filename: str, mime: str, data: dict) -> dict:
     """用使用者自己的 session 呼叫 Speakr 的上傳 API。失敗丟 ImportError_，成功回傳 Speakr 的 JSON。"""
-    with audio.open("rb") as fh:
-        r = httpx.post(
-            f"{SPEAKR}/api/v1/recordings/upload",
-            headers=speakr_headers(job["headers"]),
-            data=data,
-            files={"file": (filename, fh, mime)},
-            timeout=httpx.Timeout(connect=10, read=600, write=600, pool=10),
-        )
-    try:
-        body = r.json()
-    except ValueError:
-        body = {}
+    for attempt in (1, 2):
+        with audio.open("rb") as fh:
+            r = httpx.post(
+                f"{SPEAKR}/api/v1/recordings/upload",
+                headers=csrf_headers(speakr_headers(job["headers"])),
+                data=data,
+                files={"file": (filename, fh, mime)},
+                timeout=httpx.Timeout(connect=10, read=600, write=600, pool=10),
+            )
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        if r.status_code == 400 and body.get("csrf_reason") is not None and attempt == 1:
+            log.warning("CSRF 被拒（%s），重新取 token 再試一次", body.get("csrf_reason"))
+            continue
+        break
     if r.status_code not in (200, 201, 202):
-        raise ImportError_(f"Speakr 拒絕上傳（HTTP {r.status_code}）：{body.get('error') or r.text[:200]}")
+        hint = "（登入已過期：請重新整理 Speakr 頁面後再匯入）" if body.get("csrf_reason") is not None else ""
+        raise ImportError_(f"Speakr 拒絕上傳（HTTP {r.status_code}）：{body.get('error') or r.text[:200]}{hint}")
     return body
 
 
