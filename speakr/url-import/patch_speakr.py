@@ -94,7 +94,7 @@ MOBILE_TR_BTN = """                <button v-if="selectedRecording.id" @click.st
 """
 
 # 逐字稿面板（桌面版左側）：「Transcription」旁邊加「繁中翻譯」分頁，切換時用翻譯取代原本的逐字稿區塊
-LEFT_TAB_ANCHOR = "<span v-text=\"t('transcription.title')\"></span>"
+LEFT_TAB_ANCHOR = "<span v-text=\"t('transcription.title')\""  # 新版 Speakr 在後面多了 data-i18n，只比對開頭
 LEFT_TAB_MARK = "speakr-url-import-left-tab"
 LEFT_TAB = """            <!-- speakr-url-import-left-tab -->
             <button v-if="selectedRecording && selectedRecording.id" type="button" class="tab speakr-tr-left-tab"
